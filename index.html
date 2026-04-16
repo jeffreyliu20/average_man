@@ -1,0 +1,1286 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>The Average Man</title>
+<script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com"/>
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;1,400&family=Inter:wght@300;400;500&display=swap" rel="stylesheet"/>
+<script>
+tailwind.config = {
+  theme: {
+    extend: {
+      fontFamily: {
+        serif: ['"Playfair Display"','Georgia','serif'],
+        sans: ['Inter','system-ui','sans-serif']
+      },
+      colors: {
+        paper:    '#F5F0E8',
+        paperdark:'#EDE7D9',
+        ink:      '#1C1C1C',
+        inklight: '#3D3D3D',
+        inkfaint: '#7A7370',
+        accent:   '#2B4B6F',
+        accentlt: '#4A7BA7',
+        rule:     '#C4B8A8',
+        warn:     '#8B2E2E'
+      }
+    }
+  }
+}
+</script>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+html{scroll-behavior:smooth}
+body{background:#F5F0E8;color:#1C1C1C;font-family:'Inter',sans-serif;-webkit-font-smoothing:antialiased}
+h1,h2,h3,blockquote{font-family:'Playfair Display',Georgia,serif}
+input[type=range]{accent-color:#2B4B6F;cursor:pointer;width:100%}
+@media(prefers-reduced-motion:reduce){*,*::before,*::after{animation-duration:0.01ms!important;transition-duration:0.01ms!important}}
+.fade-in{animation:fadeIn .8s ease forwards}
+@keyframes fadeIn{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+.scroll-dot{animation:scrollPulse 1.6s ease-in-out infinite}
+@keyframes scrollPulse{0%,100%{transform:scaleY(0);opacity:0}50%{transform:scaleY(1);opacity:1}}
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const {useState, useEffect, useRef, useMemo, useCallback} = React;
+
+/* ── Population data ────────────────────────────────────────────── */
+function mulberry32(seed){
+  return function(){
+    seed|=0; seed=(seed+0x6d2b79f5)|0;
+    let t=Math.imul(seed^(seed>>>15),1|seed);
+    t=(t+Math.imul(t^(t>>>7),61|t))^t;
+    return ((t^(t>>>14))>>>0)/4294967296;
+  }
+}
+function boxMuller(r){
+  const u1=r(),u2=r();
+  return Math.sqrt(-2*Math.log(u1+1e-10))*Math.cos(2*Math.PI*u2);
+}
+function clamp(v,a,b){return Math.max(a,Math.min(b,v))}
+
+function genPop(n=200,seed=42){
+  const r=mulberry32(seed), pop=[];
+  for(let i=0;i<n;i++){
+    const rr=r();
+    pop.push({
+      id:i,
+      height:+clamp(170+boxMuller(r)*10,145,200).toFixed(1),
+      weight:+clamp(72+boxMuller(r)*12,40,120).toFixed(1),
+      income:+clamp(4800+boxMuller(r)*1600,400,12000).toFixed(0),
+      education:clamp(Math.round(12+boxMuller(r)*3),4,20),
+      marital:rr<0.55?'married':rr<0.85?'single':'widowed',
+      health:+clamp(68+boxMuller(r)*14,0,100).toFixed(1),
+      crimeRisk:+clamp(0.06+boxMuller(r)*0.04,0,1).toFixed(3),
+      mortRisk:+clamp(0.08+boxMuller(r)*0.04,0,1).toFixed(3),
+    });
+  }
+  return pop;
+}
+const POP = genPop(200,42);
+const AVG = (()=>{
+  const n=POP.length;
+  const s=POP.reduce((a,p)=>({h:a.h+p.height,w:a.w+p.weight,inc:a.inc+p.income,
+    edu:a.edu+p.education,hs:a.hs+p.health,cr:a.cr+p.crimeRisk,mr:a.mr+p.mortRisk,
+    mar:a.mar+(p.marital==='married'?1:0)}),{h:0,w:0,inc:0,edu:0,hs:0,cr:0,mr:0,mar:0});
+  return{height:+(s.h/n).toFixed(1),weight:+(s.w/n).toFixed(1),income:+(s.inc/n).toFixed(0),
+    education:+(s.edu/n).toFixed(1),health:+(s.hs/n).toFixed(1),
+    crimeRisk:+(s.cr/n).toFixed(3),mortRisk:+(s.mr/n).toFixed(3),
+    marriageRate:+((s.mar/n)*100).toFixed(1)};
+})();
+
+/* ── Helpers ────────────────────────────────────────────────────── */
+function Section({id,bg='bg-paper',children}){
+  return <section id={id} className={`py-20 ${bg} border-t border-rule`}>{children}</section>;
+}
+function SectionHeader({tag,title,sub}){
+  return(
+    <div className="text-center mb-14 px-6">
+      {tag&&<p className="font-sans text-xs tracking-widest uppercase text-inkfaint mb-4">{tag}</p>}
+      <h2 className="font-serif text-4xl md:text-5xl text-ink mb-5">{title}</h2>
+      <div className="w-16 h-px bg-rule mx-auto mb-6"/>
+      {sub&&<p className="font-sans text-base text-inkfaint max-w-xl mx-auto leading-relaxed">{sub}</p>}
+    </div>
+  );
+}
+
+/* tiny bar/area charts without recharts */
+function BarGraph({data,highlight,color='#2B4B6F'}){
+  const max=Math.max(...data.map(d=>d.v));
+  return(
+    <svg viewBox={`0 0 ${data.length*22} 80`} className="w-full" aria-label="Bar chart">
+      {data.map((d,i)=>{
+        const h=(d.v/max)*70;
+        const fill=highlight?highlight(d):color;
+        return <rect key={i} x={i*22+2} y={80-h} width={18} height={h} fill={fill} opacity={0.75}/>;
+      })}
+    </svg>
+  );
+}
+
+function buildHeightHist(){
+  const bins=18,min=145,max=200,bw=(max-min)/bins;
+  return Array.from({length:bins},(_,i)=>{
+    const lo=min+i*bw,mid=lo+bw/2;
+    const v=POP.filter(p=>p.height>=lo&&p.height<lo+bw).length;
+    return{label:mid.toFixed(0),v,dev:mid-AVG.height};
+  });
+}
+const HEIGHT_HIST=buildHeightHist();
+
+/* ── Silhouette SVG ─────────────────────────────────────────────── */
+function Sil({size=24,opacity=0.7,color='#3D3D3D'}){
+  const s=size/24;
+  return(
+    <svg width={size*0.75} height={size} viewBox="0 0 18 24" aria-hidden="true">
+      <ellipse cx="9" cy="5" rx="4" ry="4.5" fill={color} opacity={opacity}/>
+      <path d="M2 24 C2 15 16 15 16 24 Z" fill={color} opacity={opacity}/>
+    </svg>
+  );
+}
+
+function CompositeFigure({highlight=null,size=160}){
+  const c=(part)=>highlight===part?'#2B4B6F':'#3D3D3D';
+  const sc=size/160;
+  return(
+    <svg width={size} height={size*1.375} viewBox="0 0 160 220" aria-label="Composite human figure">
+      <ellipse cx="80" cy="215" rx="45" ry="6" fill="#C4B8A8" opacity="0.3"/>
+      <path d="M80 70 C50 70 35 90 35 120 L35 170 C35 185 55 195 80 195 C105 195 125 185 125 170 L125 120 C125 90 110 70 80 70 Z" fill={c('torso')} opacity="0.85"/>
+      <ellipse cx="80" cy="45" rx="28" ry="32" fill={c('head')} opacity="0.85"/>
+      <line x1="35" y1="115" x2="10" y2="155" stroke={c('arms')} strokeWidth="12" strokeLinecap="round" opacity="0.75"/>
+      <line x1="125" y1="115" x2="150" y2="155" stroke={c('arms')} strokeWidth="12" strokeLinecap="round" opacity="0.75"/>
+      <line x1="60" y1="190" x2="50" y2="220" stroke={c('legs')} strokeWidth="14" strokeLinecap="round" opacity="0.8"/>
+      <line x1="100" y1="190" x2="110" y2="220" stroke={c('legs')} strokeWidth="14" strokeLinecap="round" opacity="0.8"/>
+    </svg>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 1 — HERO
+───────────────────────────────────────────────────────────────── */
+function Hero({onBegin}){
+  const canvasRef=useRef(null);
+  const animRef=useRef(0);
+
+  useEffect(()=>{
+    const cv=canvasRef.current; if(!cv)return;
+    const ctx=cv.getContext('2d');
+    const resize=()=>{cv.width=cv.offsetWidth;cv.height=cv.offsetHeight};
+    resize();
+    window.addEventListener('resize',resize);
+    const dots=Array.from({length:100},()=>({
+      x:Math.random()*cv.width, y:Math.random()*cv.height,
+      vx:(Math.random()-.5)*.3, vy:(Math.random()-.5)*.3,
+      r:1.5+Math.random()*2, op:0.08+Math.random()*0.15
+    }));
+    const draw=()=>{
+      ctx.clearRect(0,0,cv.width,cv.height);
+      dots.forEach(d=>{
+        d.x+=d.vx; d.y+=d.vy;
+        if(d.x<0)d.x=cv.width; if(d.x>cv.width)d.x=0;
+        if(d.y<0)d.y=cv.height; if(d.y>cv.height)d.y=0;
+        ctx.beginPath(); ctx.arc(d.x,d.y,d.r,0,Math.PI*2);
+        ctx.fillStyle=`rgba(43,75,111,${d.op})`; ctx.fill();
+      });
+      animRef.current=requestAnimationFrame(draw);
+    };
+    draw();
+    return()=>{window.removeEventListener('resize',resize);cancelAnimationFrame(animRef.current)};
+  },[]);
+
+  return(
+    <section id="hero" className="relative min-h-screen flex flex-col items-center justify-center bg-paper overflow-hidden">
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" aria-hidden="true"/>
+      <div className="absolute top-14 inset-x-0 h-px bg-rule opacity-50" aria-hidden="true"/>
+      <div className="absolute bottom-14 inset-x-0 h-px bg-rule opacity-50" aria-hidden="true"/>
+      <div className="relative z-10 text-center px-8 max-w-3xl mx-auto fade-in">
+        <p className="font-sans text-xs tracking-widest uppercase text-inkfaint mb-10">Adolphe Quetelet · 1835</p>
+        <h1 className="font-serif text-7xl md:text-8xl text-ink leading-none mb-6">The Average Man</h1>
+        <div className="w-24 h-px bg-rule mx-auto mb-6"/>
+        <p className="font-serif text-xl md:text-2xl text-inklight italic mb-10">How statistics invented a social ideal</p>
+        <p className="font-sans text-base text-inkfaint max-w-xl mx-auto mb-14 leading-relaxed">
+          A population average is a tool for summarizing what is varied and particular.
+          But what happens when the average stops being a summary and becomes a model—
+          a template for what a human being is supposed to be?
+        </p>
+        <button onClick={onBegin}
+          className="font-sans text-sm tracking-widest uppercase border border-ink text-ink px-10 py-3 hover:bg-ink hover:text-paper transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-accent focus:ring-offset-2">
+          Begin
+        </button>
+      </div>
+      <div className="absolute bottom-8 left-1/2 -translate-x-1/2 flex flex-col items-center gap-1" aria-hidden="true">
+        <span className="font-sans text-xs tracking-widest text-inkfaint uppercase">Scroll</span>
+        <div className="w-px h-8 bg-inkfaint scroll-dot"/>
+      </div>
+    </section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 2 — SWARM
+───────────────────────────────────────────────────────────────── */
+function PersonCard({person,pos,onClose}){
+  const CARD_W=210, CARD_H=240;
+  const vw=window.innerWidth, vh=window.innerHeight;
+  // Place card near the click, but keep it fully on screen
+  let left=pos.x+16;
+  let top=pos.y-20;
+  if(left+CARD_W>vw-8) left=pos.x-CARD_W-16;
+  if(top+CARD_H>vh-8) top=vh-CARD_H-8;
+  if(top<8) top=8;
+  const rows=[
+    ['Height',`${person.height} cm`],['Weight',`${person.weight} kg`],
+    ['Income',`${person.income} units/yr`],['Education',`${person.education} yrs`],
+    ['Marital',person.marital],['Health',`${person.health}/100`],
+    ['Crime risk',`${(person.crimeRisk*100).toFixed(1)}%`],
+    ['Mortality',`${(person.mortRisk*100).toFixed(1)}%`],
+  ];
+  return(
+    <div style={{
+      position:'fixed',left:`${left}px`,top:`${top}px`,zIndex:9999,
+      background:'#F5F0E8',border:'1px solid #C4B8A8',
+      boxShadow:'0 4px 24px rgba(0,0,0,0.13)',
+      padding:'16px',width:`${CARD_W}px`,fontFamily:'Inter,sans-serif',fontSize:'12px',lineHeight:'1.6',
+    }}>
+      <div style={{display:'flex',justifyContent:'space-between',alignItems:'baseline',marginBottom:'8px'}}>
+        <span style={{fontFamily:'Playfair Display,serif',fontSize:'14px',color:'#1C1C1C'}}>No. {person.id+1}</span>
+        <button onClick={onClose}
+          style={{background:'none',border:'none',cursor:'pointer',fontSize:'18px',lineHeight:1,color:'#7A7370',padding:'0 2px'}}
+          aria-label="Close">×</button>
+      </div>
+      <div style={{height:'1px',background:'#C4B8A8',marginBottom:'10px'}}/>
+      {rows.map(([k,v])=>(
+        <div key={k} style={{display:'flex',justifyContent:'space-between',paddingBottom:'3px'}}>
+          <span style={{color:'#7A7370'}}>{k}</span>
+          <span style={{color:'#3D3D3D',fontWeight:500}}>{v}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Swarm(){
+  const [sel,setSel]=useState(null);
+  const [pos,setPos]=useState({x:0,y:0});
+  const people=POP.slice(0,120);
+  const cols=12;
+  const toggle=(p,e)=>{
+    const r=e.currentTarget.getBoundingClientRect();
+    setPos({x:r.left+r.width/2, y:r.top+r.height/2});
+    setSel(prev=>(prev&&prev.id===p.id)?null:p);
+  };
+  return(
+    <Section id="swarm" bg="bg-paper">
+      <SectionHeader tag="Section I" title="Too Many Individuals"
+        sub="A science of society cannot begin with singular lives. Each person is too varied, too particular. Click any figure to inspect their traits."/>
+      <div className="max-w-5xl mx-auto px-6">
+        <div className="relative w-full" style={{paddingBottom:'72%'}} role="list" aria-label="Population grid">
+          {people.map((p,i)=>{
+            const col=i%cols, row=Math.floor(i/cols);
+            const x=(col/cols*100)+(100/cols*.5);
+            const y=(row/10*100)+(100/10*.5);
+            const isSelected=sel&&sel.id===p.id;
+            return(
+              <button key={p.id} role="listitem"
+                onClick={(e)=>toggle(p,e)}
+                aria-label={`Individual ${p.id+1}`}
+                style={{position:'absolute',left:`${x}%`,top:`${y}%`,
+                  transform:'translate(-50%,-50%)',lineHeight:0,
+                  background:'none',border:'none',cursor:'pointer',padding:'4px'}}>
+                <Sil size={22} opacity={0.45+(p.health/100)*.4} color={isSelected?'#2B4B6F':'#3D3D3D'}/>
+              </button>
+            );
+          })}
+        </div>
+        <p className="mt-6 text-center font-serif italic text-inkfaint text-sm">
+          120 individuals. 120 different lives. Where does society begin?
+        </p>
+      </div>
+      {sel&&<PersonCard person={sel} pos={pos} onClose={()=>setSel(null)}/>}
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 3 — TRANSFORMATION
+───────────────────────────────────────────────────────────────── */
+function Transformation(){
+  const [computed,setComputed]=useState(false);
+  const stats=[
+    {label:'Height',val:`${AVG.height} cm`,sub:'average stature'},
+    {label:'Weight',val:`${AVG.weight} kg`,sub:'average mass'},
+    {label:'Income',val:`${AVG.income} units`,sub:'per annum'},
+    {label:'Education',val:`${AVG.education} yrs`,sub:'schooling'},
+    {label:'Marriage rate',val:`${AVG.marriageRate}%`,sub:'of the social body'},
+    {label:'Crime risk',val:`${(AVG.crimeRisk*100).toFixed(1)}%`,sub:'social regularity'},
+    {label:'Mortality risk',val:`${(AVG.mortRisk*100).toFixed(1)}%`,sub:'per year'},
+    {label:'Health',val:`${AVG.health}/100`,sub:'composite score'},
+  ];
+  const maxH=Math.max(...HEIGHT_HIST.map(d=>d.v));
+  return(
+    <Section id="transform" bg="bg-paperdark">
+      <SectionHeader tag="Section II" title="Compute the Average Man"
+        sub="From 200 varied individuals, a single synthetic figure can be distilled. Watch what happens when particularity is averaged away."/>
+      <div className="max-w-5xl mx-auto px-6">
+        {!computed?(
+          <div className="flex flex-col items-center gap-8">
+            <div className="flex flex-wrap justify-center gap-1.5 max-w-xs opacity-50" aria-hidden="true">
+              {POP.slice(0,56).map(p=><Sil key={p.id} size={16} opacity={0.5+(p.health/100)*.35}/>)}
+            </div>
+            <button onClick={()=>setComputed(true)}
+              className="font-serif text-xl border-2 border-ink text-ink px-12 py-5 hover:bg-ink hover:text-paper transition-all duration-300 focus:outline-none focus:ring-2 focus:ring-accent"
+              aria-label="Compute the average man">
+              Compute the Average Man
+            </button>
+          </div>
+        ):(
+          <div className="grid md:grid-cols-2 gap-14 fade-in">
+            <div className="flex flex-col items-center gap-6">
+              <CompositeFigure size={160}/>
+              <p className="font-sans text-xs tracking-widest uppercase text-inkfaint">Representative of the social body</p>
+              {/* Bell curve */}
+              <div className="w-full mt-4">
+                <p className="font-sans text-xs text-inkfaint tracking-widest uppercase mb-2">Height distribution</p>
+                <svg viewBox={`0 0 ${HEIGHT_HIST.length*24} 90`} className="w-full" aria-label="Height histogram">
+                  <defs>
+                    <linearGradient id="hg" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#2B4B6F" stopOpacity="0.5"/>
+                      <stop offset="100%" stopColor="#2B4B6F" stopOpacity="0.05"/>
+                    </linearGradient>
+                  </defs>
+                  {HEIGHT_HIST.map((d,i)=>{
+                    const bh=(d.v/maxH)*75;
+                    return<rect key={i} x={i*24+2} y={88-bh} width={20} height={bh} fill="url(#hg)" stroke="#2B4B6F" strokeWidth="0.5"/>;
+                  })}
+                </svg>
+                <p className="font-sans text-xs text-accent mt-1">mean = {AVG.height} cm</p>
+              </div>
+            </div>
+            <div className="divide-y divide-rule">
+              {stats.map(s=>(
+                <div key={s.label} className="flex justify-between items-baseline py-3">
+                  <div>
+                    <span className="font-sans text-sm text-inklight">{s.label}</span>
+                    <span className="font-sans text-xs text-inkfaint ml-2">{s.sub}</span>
+                  </div>
+                  <span className="font-serif text-base font-semibold text-ink">{s.val}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 4 — EXPLANATION
+───────────────────────────────────────────────────────────────── */
+const ANNOTATIONS=[
+  {id:'head',  label:'Stature',         text:`At ${AVG.height} cm, the average man stands as the modal figure of the social body—not the tallest, not the shortest, but the one around whom the rest of the population orbits.`},
+  {id:'torso', label:'Moral propensity',text:`Quetelet believed that social regularities—crime, marriage, suicide—were as lawlike as the motions of the planets. The average man embodied the average propensity.`},
+  {id:'arms',  label:'Economic condition',text:`An income of ${AVG.income} units per annum. Not poverty, not wealth. The stable center around which social disorder arranges itself.`},
+  {id:'legs',  label:'Mortality',       text:`A ${(AVG.mortRisk*100).toFixed(1)}% annual mortality risk, distributed evenly across the social body. Death, Quetelet argued, follows the same arithmetic regularity as birth.`},
+];
+
+function Explanation(){
+  const [active,setActive]=useState(null);
+  return(
+    <Section id="explanation" bg="bg-paper">
+      <SectionHeader tag="Section III" title="What the Average Man Is"
+        sub="He is not a real individual. He is not merely a statistic. He is a constructed social abstraction—a fiction that became fact."/>
+      <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-2 gap-14">
+        <div>
+          <div className="border-l-2 border-rule pl-6 mb-10">
+            <p className="font-sans text-base text-inklight leading-relaxed mb-4">
+              In 1835, Adolphe Quetelet—a Belgian astronomer—proposed that if you averaged the physical
+              and moral characteristics of an entire population, the result would not be an abstraction.
+              It would be a type: <em>l'homme moyen</em>, the average man.
+            </p>
+            <p className="font-sans text-base text-inklight leading-relaxed">
+              Society becomes legible only through aggregates—not through biography or anecdote,
+              but through the regularities that emerge when thousands of lives are measured and combined.
+            </p>
+          </div>
+          <div className="space-y-0 divide-y divide-rule">
+            {ANNOTATIONS.map(a=>(
+              <div key={a.id} className="py-6 cursor-pointer"
+                onMouseEnter={()=>setActive(a.id)} onMouseLeave={()=>setActive(null)}
+                onClick={()=>setActive(active===a.id?null:a.id)}>
+                <p className="font-sans text-xs tracking-widest uppercase text-accent mb-2">{a.label}</p>
+                <p className={`font-sans text-sm leading-relaxed transition-colors duration-200 ${active===a.id?'text-inklight':'text-inkfaint'}`}>{a.text}</p>
+              </div>
+            ))}
+          </div>
+          <blockquote className="mt-10 border-l-2 border-accent pl-6">
+            <p className="font-serif italic text-base text-inklight leading-relaxed mb-2">
+              "If an individual possessed all the qualities of the average man, he would represent
+              all that is great, good, and beautiful."
+            </p>
+            <footer className="font-sans text-xs text-inkfaint uppercase tracking-wider">— Quetelet, <cite>A Treatise on Man</cite>, 1835</footer>
+          </blockquote>
+        </div>
+        <div className="hidden md:flex flex-col items-center pt-8">
+          <div className="sticky top-1/4">
+            <CompositeFigure highlight={active} size={180}/>
+            {active&&(
+              <p className="mt-3 text-center font-sans text-xs tracking-widest uppercase text-accent fade-in">
+                {ANNOTATIONS.find(a=>a.id===active)?.label}
+              </p>
+            )}
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 5 — INTERPRETATION TOGGLE
+───────────────────────────────────────────────────────────────── */
+const MODES={
+  difference:{label:'Difference',
+    desc:'Each height is simply what it is. Distance from the mean is neutral—a description, not a judgment.',
+    note:'Seen this way, diversity is a feature of the population, not a flaw in its members.',
+    barColor:(_)=>'#2B4B6F',barOp:(_)=>0.75,border:'border-accent'},
+  variation:{label:'Variation',
+    desc:'The same distribution, reframed. Spread matters. The population contains multitudes that a single mean cannot capture.',
+    note:'Variation is generative: the raw material from which adaptation and diversity arise.',
+    barColor:(d)=>Math.abs(d)>18?'#4A7BA7':Math.abs(d)>9?'#2B4B6F':'#1C3A54',
+    barOp:(d)=>0.4+Math.min(0.5,Math.abs(d)/40),border:'border-accentlt'},
+  error:{label:'Error',
+    desc:"Now the mean becomes a target and all departures from it become errors—deviations from a true type. The further you are from the average, the more you look like a mistake.",
+    note:"This is how statistics quietly becomes morality: the descriptive mean becomes a prescriptive norm.",
+    barColor:(d)=>Math.abs(d)>18?'#8B2E2E':Math.abs(d)>9?'#B84444':'#2B4B6F',
+    barOp:(d)=>0.3+Math.min(0.65,Math.abs(d)/28),border:'border-warn'},
+};
+
+function InterpretToggle(){
+  const [mode,setMode]=useState('difference');
+  const cfg=MODES[mode];
+  const maxV=Math.max(...HEIGHT_HIST.map(d=>d.v));
+  const W=HEIGHT_HIST.length*26;
+  return(
+    <Section id="norm" bg="bg-paperdark">
+      <SectionHeader tag="Section IV" title="From Average to Norm"
+        sub="The same distribution. The same data. Three different ways of reading it. Watch how a change of framing transforms a neutral description into a moral ranking."/>
+      <div className="max-w-4xl mx-auto px-6">
+        <div className="flex justify-center mb-10" role="group" aria-label="Interpret deviation as">
+          <div className="inline-flex border border-rule divide-x divide-rule overflow-hidden">
+            {Object.entries(MODES).map(([k,v])=>(
+              <button key={k} onClick={()=>setMode(k)} aria-pressed={mode===k}
+                className={`px-5 py-2.5 font-sans text-sm transition-colors duration-200 focus:outline-none ${
+                  mode===k?(k==='error'?'bg-warn text-paper':'bg-ink text-paper'):'bg-paper text-inklight hover:bg-paperdark'}`}>
+                {v.label}
+              </button>
+            ))}
+          </div>
+        </div>
+        {/* Chart */}
+        <div className="mb-8 overflow-x-auto">
+          <svg viewBox={`0 0 ${W} 110`} className="w-full min-w-72" aria-label="Height distribution chart">
+            {HEIGHT_HIST.map((d,i)=>{
+              const bh=(d.v/maxV)*90;
+              return(
+                <rect key={i} x={i*26+2} y={108-bh} width={22} height={bh}
+                  fill={cfg.barColor(d.dev)} opacity={cfg.barOp(d.dev)}/>
+              );
+            })}
+            {/* Mean line */}
+            <line x1={HEIGHT_HIST.findIndex(d=>parseFloat(d.label)>=AVG.height)*26+13}
+                  y1="0" x2={HEIGHT_HIST.findIndex(d=>parseFloat(d.label)>=AVG.height)*26+13}
+                  y2="108" stroke="#2B4B6F" strokeWidth="1.5" strokeDasharray="4,3"/>
+          </svg>
+          <p className="font-sans text-xs text-accent mt-1 text-center">
+            mean = {AVG.height} cm &nbsp;|&nbsp; {HEIGHT_HIST.length} bins across 145–200 cm
+          </p>
+        </div>
+        <div key={mode} className={`border-l-4 ${cfg.border} pl-6 py-4 fade-in`}>
+          <p className="font-sans text-base text-inklight leading-relaxed mb-2">{cfg.desc}</p>
+          <p className="font-sans text-sm text-inkfaint italic">{cfg.note}</p>
+        </div>
+        <p className="mt-12 text-center font-serif italic text-lg text-inklight max-w-lg mx-auto">
+          "A statistical tool can quietly become a moral or political ranking system—depending entirely on the story told about deviation."
+        </p>
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 6 — SOCIAL LAW SIMULATOR
+───────────────────────────────────────────────────────────────── */
+const REFLECTIONS=[
+  "If the pattern is social, who is responsible?",
+  "Is crime an individual act, a social symptom, or both?",
+  "When rates are stable across decades, is the criminal a product of conditions—or of choices?",
+  "If improving wages reduces crime, does that exonerate the individual?",
+  "Statistics describe what is. They cannot tell you what ought to be.",
+];
+
+function simulate(c){
+  const wb=(c.edu*.25+c.wages*.3+c.san*.2+c.food*.25)/100;
+  const cr=Math.max(0,0.22-wb*.14+(1-c.pol/100)*.03);
+  const mr=Math.max(0,0.4+wb*.2);
+  const mort=Math.max(0,0.18-wb*.1);
+  const inst=Math.max(0,1-wb*.7-(c.pol/100)*.1);
+  let seed=7;
+  function rng(){seed=(seed*1664525+1013904223)&0xffffffff;return(seed>>>0)/0x100000000;}
+  const years=Array.from({length:20},(_,i)=>{
+    const n=()=>(rng()+rng()+rng()-1.5)/1.5;
+    return{yr:1831+i,
+      crime:Math.max(0,Math.min(1,cr+n()*.025)),
+      marry:Math.max(0,Math.min(1,mr+n()*.02)),
+      mort:Math.max(0,Math.min(1,mort+n()*.015))};
+  });
+  return{years,cr:+(cr*100).toFixed(1),mr:+(mr*100).toFixed(1),mort:+(mort*100).toFixed(1),inst:+(inst*100).toFixed(1)};
+}
+
+function SocialLaw(){
+  const [c,setC]=useState({edu:50,wages:50,san:50,food:50,pol:50});
+  const [ri,setRi]=useState(0);
+  const [showR,setShowR]=useState(false);
+  const res=useMemo(()=>simulate(c),[c]);
+  const sliders=[
+    {id:'edu',label:'Education',desc:'Years of public schooling'},
+    {id:'wages',label:'Wages',desc:'Labor compensation adequacy'},
+    {id:'san',label:'Sanitation',desc:'Urban sanitation quality'},
+    {id:'food',label:'Food security',desc:'Reliability of food supply'},
+    {id:'pol',label:'Policing',desc:'Enforcement apparatus'},
+  ];
+  const maxCr=Math.max(...res.years.map(d=>d.crime));
+  const maxMr=Math.max(...res.years.map(d=>d.marry));
+  const W=res.years.length*18;
+  const H=100;
+  return(
+    <Section id="social-law" bg="bg-paper">
+      <SectionHeader tag="Section V" title="Crime, Freedom, and Social Law"
+        sub="Crime rates are stable across years. Society has its budget of crimes, as surely as it has its budget of taxes. If conditions determine outcomes, who bears responsibility?"/>
+      <div className="max-w-5xl mx-auto px-6 grid md:grid-cols-5 gap-10">
+        <div className="md:col-span-2 space-y-5">
+          <p className="font-sans text-xs tracking-widest uppercase text-inkfaint">Social conditions</p>
+          {sliders.map(s=>(
+            <div key={s.id}>
+              <div className="flex justify-between mb-1">
+                <label htmlFor={`s-${s.id}`} className="font-sans text-sm text-inklight">{s.label}</label>
+                <span className="font-sans text-xs text-accent font-medium">{c[s.id]}%</span>
+              </div>
+              <p className="font-sans text-xs text-inkfaint mb-1">{s.desc}</p>
+              <input id={`s-${s.id}`} type="range" min="0" max="100" value={c[s.id]}
+                onChange={e=>setC(p=>({...p,[s.id]:+e.target.value}))}
+                aria-label={`${s.label}: ${c[s.id]}%`}/>
+            </div>
+          ))}
+        </div>
+        <div className="md:col-span-3 space-y-6">
+          <p className="font-sans text-xs tracking-widest uppercase text-inkfaint">Simulated rates 1831–1850</p>
+          <p className="font-sans text-xs text-inkfaint italic">Probabilistic aggregates — no individual is determined by these conditions.</p>
+          {/* Mini line chart */}
+          <svg viewBox={`0 0 ${W} ${H}`} className="w-full border border-rule bg-paper p-1" aria-label="Rate simulation chart">
+            {res.years.map((d,i)=>{
+              const x=i*18+9;
+              if(i===0)return null;
+              const prev=res.years[i-1];
+              const crY=H-(d.crime/.4)*H*.9;
+              const mrY=H-(d.marry/.7)*H*.9;
+              const pcrY=H-(prev.crime/.4)*H*.9;
+              const pmrY=H-(prev.marry/.7)*H*.9;
+              return(
+                <g key={i}>
+                  <line x1={(i-1)*18+9} y1={Math.max(2,pcrY)} x2={x} y2={Math.max(2,crY)} stroke="#8B2E2E" strokeWidth="1.5"/>
+                  <line x1={(i-1)*18+9} y1={Math.max(2,pmrY)} x2={x} y2={Math.max(2,mrY)} stroke="#2B4B6F" strokeWidth="1.5"/>
+                </g>
+              );
+            })}
+          </svg>
+          <div className="flex gap-5 text-xs font-sans">
+            <span><span className="inline-block w-4 h-px border-t-2 border-warn mr-1 align-middle"/>Crime</span>
+            <span><span className="inline-block w-4 h-px border-t-2 border-accent mr-1 align-middle"/>Marriage</span>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            {[['Crime rate',`${res.cr}%`,'text-warn'],['Marriage rate',`${res.mr}%`,'text-accent'],
+              ['Mortality rate',`${res.mort}%`,'text-inkfaint'],['Social instability',`${res.inst}%`,+res.inst>40?'text-warn':'text-inklight']
+            ].map(([l,v,cls])=>(
+              <div key={l} className="border border-rule p-3">
+                <p className="font-sans text-xs text-inkfaint mb-1">{l}</p>
+                <p className={`font-serif text-xl font-semibold ${cls}`}>{v}</p>
+              </div>
+            ))}
+          </div>
+          <div>
+            <button onClick={()=>{setRi(i=>(i+1)%REFLECTIONS.length);setShowR(true)}}
+              className="font-sans text-xs tracking-widest uppercase border border-rule text-inkfaint px-5 py-2 hover:border-ink hover:text-ink transition-colors focus:outline-none focus:ring-2 focus:ring-accent">
+              Reflect →
+            </button>
+            {showR&&(
+              <blockquote key={ri} className="mt-5 border-l-2 border-inkfaint pl-5 fade-in">
+                <p className="font-serif italic text-base text-inklight">{REFLECTIONS[ri]}</p>
+              </blockquote>
+            )}
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 7 — CRITIQUE / CLUSTER VIEW
+───────────────────────────────────────────────────────────────── */
+function Critique(){
+  const [view,setView]=useState('mean');
+  const maxH=Math.max(...HEIGHT_HIST.map(d=>d.v));
+  const W=HEIGHT_HIST.length*26;
+
+  // Clusters: education quartile coloring
+  const clusters=useMemo(()=>{
+    const sorted=[...POP].sort((a,b)=>a.education-b.education);
+    const q=Math.floor(sorted.length/4);
+    const colors=['#7A7370','#4A7BA7','#2B4B6F','#1C3A54'];
+    return sorted.map((p,i)=>({...p,color:colors[Math.min(3,Math.floor(i/q))]}));
+  },[]);
+
+  const minInc=Math.min(...POP.map(p=>p.income));
+  const maxInc=Math.max(...POP.map(p=>p.income));
+  const CW=340,CH=200;
+
+  const viewDescs={
+    mean:'One number. One figure. The average man stands alone, representative of all, identical to none. This is Quetelet\'s dream: a population reduced to its center of gravity.',
+    distribution:'The spread matters as much as the center. Every individual is a point in a distribution—not a deviation from a norm, but a member of a range. The bell curve reveals what the mean conceals.',
+    clusters:'No single mean describes this population cleanly. There are subgroups, tendencies, overlapping patterns. The average man was always a weighted sum of many different kinds of people.',
+  };
+
+  return(
+    <Section id="critique" bg="bg-paperdark">
+      <SectionHeader tag="Section VI" title="The Critique of the Average"
+        sub="Later thinkers insisted that variation is not noise to be dismissed. It is the signal. The spread, the clusters, the subgroups—these are the things that a single mean quietly erases."/>
+      <div className="max-w-4xl mx-auto px-6">
+        <div className="flex justify-center mb-10" role="group" aria-label="Population view">
+          {['mean','distribution','clusters'].map(v=>(
+            <button key={v} onClick={()=>setView(v)} aria-pressed={view===v}
+              className={`px-5 py-2.5 font-sans text-sm border border-rule transition-colors first:border-r-0 last:border-l-0 focus:outline-none ${
+                view===v?'bg-ink text-paper':'bg-paper text-inklight hover:bg-paperdark'}`}>
+              {v.charAt(0).toUpperCase()+v.slice(1)}
+            </button>
+          ))}
+        </div>
+
+        <div className="border border-rule bg-paper p-6 mb-8 min-h-64 flex flex-col items-center justify-center">
+          {view==='mean'&&(
+            <div className="flex flex-col items-center gap-4 fade-in">
+              <CompositeFigure size={120}/>
+              <p className="font-serif text-xl">{AVG.height} cm · {AVG.weight} kg</p>
+              <p className="font-sans text-xs text-inkfaint tracking-widest uppercase">The average man</p>
+            </div>
+          )}
+          {view==='distribution'&&(
+            <div className="w-full fade-in">
+              <p className="font-sans text-xs text-inkfaint tracking-widest uppercase mb-3 text-center">Height distribution — 200 individuals</p>
+              <svg viewBox={`0 0 ${W} 100`} className="w-full" aria-label="Height distribution">
+                <defs>
+                  <linearGradient id="dg" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#2B4B6F" stopOpacity="0.45"/>
+                    <stop offset="100%" stopColor="#2B4B6F" stopOpacity="0.05"/>
+                  </linearGradient>
+                </defs>
+                {HEIGHT_HIST.map((d,i)=>{
+                  const bh=(d.v/maxH)*88;
+                  return<rect key={i} x={i*26+2} y={98-bh} width={22} height={bh} fill="url(#dg)" stroke="#2B4B6F" strokeWidth="0.5"/>;
+                })}
+              </svg>
+              <p className="font-sans text-xs text-accent text-center mt-2">mean = {AVG.height} cm</p>
+            </div>
+          )}
+          {view==='clusters'&&(
+            <div className="w-full fade-in">
+              <p className="font-sans text-xs text-inkfaint tracking-widest uppercase mb-3 text-center">Height × Income, colored by education quartile</p>
+              <svg viewBox={`0 0 ${CW} ${CH}`} className="w-full max-w-sm mx-auto" aria-label="Scatter plot">
+                {clusters.map(p=>{
+                  const cx=((p.height-145)/(200-145))*(CW-20)+10;
+                  const cy=CH-((p.income-minInc)/(maxInc-minInc))*(CH-20)-10;
+                  return<circle key={p.id} cx={cx} cy={cy} r="4" fill={p.color} opacity="0.55"/>;
+                })}
+              </svg>
+              <div className="flex justify-center gap-4 mt-3 flex-wrap">
+                {[['Low ed.','#7A7370'],['Mid-low','#4A7BA7'],['Mid-high','#2B4B6F'],['High ed.','#1C3A54']].map(([l,c])=>(
+                  <span key={l} className="flex items-center gap-1.5 font-sans text-xs text-inkfaint">
+                    <span className="w-2.5 h-2.5 rounded-full inline-block" style={{background:c}}/>
+                    {l}
+                  </span>
+                ))}
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div key={view} className="border-l-2 border-accent pl-6 py-3 fade-in">
+          <p className="font-sans text-base text-inklight leading-relaxed">{viewDescs[view]}</p>
+        </div>
+        <p className="mt-12 text-center font-serif italic text-lg text-inklight max-w-lg mx-auto leading-relaxed">
+          "The average man is not a portrait of any actual person. He is a statistical fiction—useful, powerful, and capable of doing quiet violence to everyone who does not resemble him."
+        </p>
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 8 — WHERE DO YOU FALL?
+───────────────────────────────────────────────────────────────── */
+function WhereDoYouFall(){
+  const [value,setValue]=useState('');
+  const [submitted,setSubmitted]=useState(false);
+  const [mode,setMode]=useState('difference');
+  const num=parseFloat(value);
+  const valid=!isNaN(num)&&num>100&&num<250;
+
+  const maxV=Math.max(...HEIGHT_HIST.map(d=>d.v));
+  const W=HEIGHT_HIST.length*26, H=110;
+
+  // Which bin does the user fall in?
+  const userBin=valid?HEIGHT_HIST.findIndex((d,i)=>{
+    const lo=145+(i*(55/HEIGHT_HIST.length));
+    const hi=lo+(55/HEIGHT_HIST.length);
+    return num>=lo&&num<hi;
+  }):-1;
+
+  const deviation=valid?+(num-AVG.height).toFixed(1):null;
+  const pct=valid?Math.round(HEIGHT_HIST.slice(0,Math.max(0,userBin+1)).reduce((a,d)=>a+d.v,0)/POP.length*100):null;
+
+  const modeLabels={
+    difference:{color:'#2B4B6F', word:'different from', tone:'neutral',
+      label:'A difference.', note:'Your height is simply where you are in the range. No judgment implied.'},
+    variation:{color:'#4A7BA7', word:'varies from', tone:'neutral',
+      label:'A variation.', note:'You are one point in a distribution. The spread is the signal, not a flaw.'},
+    error:{color:'#8B2E2E', word:'deviates from', tone:'warn',
+      label:'An error?', note:'Under this framing, distance from the mean implies departure from a type. The number has not changed. Only the story has.'},
+  };
+  const cfg=modeLabels[mode];
+
+  return(
+    <Section id="where" bg="bg-paper">
+      <SectionHeader tag="Section VII" title="Where Do You Fall?"
+        sub="Enter your own height. Watch where you land in the distribution — then watch what changes when the interpretation does."/>
+      <div className="max-w-3xl mx-auto px-6">
+
+        {/* Input */}
+        <div className="flex flex-col items-center gap-4 mb-10">
+          <div style={{display:'flex',gap:'8px',alignItems:'center'}}>
+            <input
+              type="number" placeholder="Your height in cm" value={value}
+              onChange={e=>{setValue(e.target.value);setSubmitted(false)}}
+              onKeyDown={e=>e.key==='Enter'&&valid&&setSubmitted(true)}
+              style={{fontFamily:'Inter,sans-serif',fontSize:'15px',padding:'10px 14px',
+                border:'1px solid #C4B8A8',background:'#F5F0E8',color:'#1C1C1C',
+                width:'200px',outline:'none'}}
+              aria-label="Enter your height in centimetres"
+            />
+            <button onClick={()=>valid&&setSubmitted(true)}
+              disabled={!valid}
+              style={{fontFamily:'Inter,sans-serif',fontSize:'12px',letterSpacing:'0.15em',
+                textTransform:'uppercase',padding:'10px 20px',
+                background:valid?'#1C1C1C':'transparent',
+                color:valid?'#F5F0E8':'#C4B8A8',
+                border:'1px solid '+(valid?'#1C1C1C':'#C4B8A8'),cursor:valid?'pointer':'default',
+                transition:'all 0.2s'}}>
+              Place me
+            </button>
+          </div>
+          {value&&!valid&&<p style={{fontFamily:'Inter,sans-serif',fontSize:'12px',color:'#8B2E2E'}}>Enter a height between 100 and 250 cm.</p>}
+        </div>
+
+        {submitted&&valid&&(
+          <div className="fade-in">
+            {/* Chart with user dot */}
+            <div className="mb-3">
+              <svg viewBox={`0 0 ${W} ${H+20}`} className="w-full" aria-label="Height distribution with your position marked">
+                <defs>
+                  <linearGradient id="wg" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#2B4B6F" stopOpacity="0.35"/>
+                    <stop offset="100%" stopColor="#2B4B6F" stopOpacity="0.05"/>
+                  </linearGradient>
+                </defs>
+                {HEIGHT_HIST.map((d,i)=>{
+                  const bh=(d.v/maxV)*(H-10);
+                  const isUser=i===userBin;
+                  return(
+                    <rect key={i} x={i*26+2} y={H-bh} width={22} height={bh}
+                      fill={isUser?cfg.color:'#2B4B6F'}
+                      opacity={isUser?0.95:0.25}/>
+                  );
+                })}
+                {/* Mean line */}
+                {(()=>{
+                  const mi=HEIGHT_HIST.findIndex(d=>parseFloat(d.label)>=AVG.height);
+                  const mx=mi*26+13;
+                  return<line x1={mx} y1="0" x2={mx} y2={H} stroke="#2B4B6F" strokeWidth="1" strokeDasharray="3,3"/>;
+                })()}
+                {/* User marker */}
+                {userBin>=0&&(()=>{
+                  const ux=userBin*26+13;
+                  const bh=(HEIGHT_HIST[userBin].v/maxV)*(H-10);
+                  return(
+                    <g>
+                      <circle cx={ux} cy={H-bh-8} r="5" fill={cfg.color} opacity="0.9"/>
+                      <line x1={ux} y1={H-bh-3} x2={ux} y2={H} stroke={cfg.color} strokeWidth="1.5" strokeDasharray="2,2"/>
+                      <text x={ux} y={H+14} textAnchor="middle" fontSize="9" fill={cfg.color} fontFamily="Inter,sans-serif">
+                        {num} cm
+                      </text>
+                    </g>
+                  );
+                })()}
+                {/* Mean label */}
+                {(()=>{
+                  const mi=HEIGHT_HIST.findIndex(d=>parseFloat(d.label)>=AVG.height);
+                  return<text x={mi*26+13} y={H+14} textAnchor="middle" fontSize="9" fill="#2B4B6F" fontFamily="Inter,sans-serif">mean</text>;
+                })()}
+              </svg>
+            </div>
+
+            {/* Stats */}
+            <div style={{display:'flex',gap:'12px',flexWrap:'wrap',marginBottom:'24px'}}>
+              {[
+                ['Your height', `${num} cm`],
+                ['Population mean', `${AVG.height} cm`],
+                ['Distance from mean', `${deviation>0?'+':''}${deviation} cm`],
+                ['Taller than approx.', `${pct}% of population`],
+              ].map(([k,v])=>(
+                <div key={k} style={{flex:'1',minWidth:'130px',border:'1px solid #C4B8A8',padding:'10px 12px'}}>
+                  <div style={{fontFamily:'Inter,sans-serif',fontSize:'11px',color:'#7A7370',marginBottom:'3px'}}>{k}</div>
+                  <div style={{fontFamily:'Playfair Display,serif',fontSize:'17px',color: k==='Distance from mean'?cfg.color:'#1C1C1C'}}>{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Interpretation toggle */}
+            <p style={{fontFamily:'Inter,sans-serif',fontSize:'11px',letterSpacing:'0.2em',textTransform:'uppercase',color:'#7A7370',marginBottom:'10px'}}>
+              Interpret your distance from the mean as:
+            </p>
+            <div style={{display:'flex',border:'1px solid #C4B8A8',overflow:'hidden',marginBottom:'16px',width:'fit-content'}}>
+              {Object.entries(modeLabels).map(([k,v])=>(
+                <button key={k} onClick={()=>setMode(k)}
+                  style={{padding:'8px 18px',fontFamily:'Inter,sans-serif',fontSize:'13px',border:'none',
+                    borderRight:'1px solid #C4B8A8',cursor:'pointer',transition:'all 0.2s',
+                    background:mode===k?(k==='error'?'#8B2E2E':'#1C1C1C'):'#F5F0E8',
+                    color:mode===k?'#F5F0E8':'#3D3D3D'}}>
+                  {k==='difference'?'Difference':k==='variation'?'Variation':'Error'}
+                </button>
+              ))}
+            </div>
+
+            {/* Reveal text */}
+            <div key={mode} className="fade-in" style={{borderLeft:`3px solid ${cfg.color}`,paddingLeft:'18px',paddingTop:'6px',paddingBottom:'6px',marginBottom:'24px'}}>
+              <p style={{fontFamily:'Inter,sans-serif',fontSize:'15px',color:'#3D3D3D',lineHeight:'1.7',marginBottom:'6px'}}>
+                You are <strong style={{color:cfg.color}}>{Math.abs(deviation)} cm</strong> {cfg.word} the average.
+                {' '}{cfg.label}
+              </p>
+              <p style={{fontFamily:'Inter,sans-serif',fontSize:'13px',color:'#7A7370',fontStyle:'italic',lineHeight:'1.6'}}>
+                {cfg.note}
+              </p>
+            </div>
+
+            {mode==='error'&&(
+              <div key="reveal" className="fade-in" style={{background:'#F0D4D4',border:'1px solid #C4B8A8',padding:'16px 20px',marginTop:'4px'}}>
+                <p style={{fontFamily:'Playfair Display,serif',fontSize:'15px',fontStyle:'italic',color:'#1C1C1C',lineHeight:'1.7'}}>
+                  "The number has not changed. Your height is exactly what it was.
+                  Only the interpretive frame has shifted — and with it, your relationship to the mean.
+                  This is how a descriptive statistic becomes a normative one."
+                </p>
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 9 — CREATE-A-MAN
+───────────────────────────────────────────────────────────────── */
+function predictRisks(traits){
+  // Normalize each trait 0–1 relative to population range
+  const incomeNorm = Math.min(1,(traits.income-400)/(12000-400));
+  const eduNorm    = (traits.education-4)/(20-4);
+  const healthNorm = traits.health/100;
+
+  // Height & weight: deviation from population mean affects health/mortality
+  // Very high or very low BMI (weight/height²) shifts mortality and marriage
+  const heightM    = traits.height/100;                          // metres
+  const bmi        = traits.weight/(heightM*heightM);
+  // BMI 18.5–25 is "optimal" in this model; penalty grows outside that band
+  const bmiPenalty = Math.min(0.25, Math.abs(bmi-21.5)/20);
+
+  // Stature: in 19th-c. context, taller → slightly better nutrition/resources
+  const heightNorm = (traits.height-145)/(200-145);             // 0–1
+
+  // Overall wellbeing: income and education dominate; health modifies;
+  // height adds a small resource-proxy signal; bmi penalises extremes
+  const wb = Math.max(0, Math.min(1,
+    incomeNorm*0.30 + eduNorm*0.30 + healthNorm*0.25 + heightNorm*0.05 - bmiPenalty*0.10
+  ));
+
+  // Crime risk: deprivation driven; education is the strongest protective factor
+  const crimeRisk = Math.max(0.005, Math.min(0.99,
+    0.22 - incomeNorm*0.07 - eduNorm*0.07 - healthNorm*0.02
+  ));
+
+  // Mortality: health and BMI are primary drivers; income buys food/shelter
+  const mortRisk = Math.max(0.005, Math.min(0.99,
+    0.18 - healthNorm*0.06 - incomeNorm*0.03 - eduNorm*0.02 + bmiPenalty*0.04
+  ));
+
+  // Marriage: economic stability, health, and stature all factor in
+  // (Quetelet's data showed marriage rates rose with income and fell with very poor health)
+  const marriageProb = Math.max(0.05, Math.min(0.99,
+    0.30 + incomeNorm*0.25 + eduNorm*0.10 + healthNorm*0.08 + heightNorm*0.04 - bmiPenalty*0.05
+  ));
+
+  // Life expectancy: health and income are pillars; extreme BMI shortens life
+  const lifeExp = Math.round(40 + healthNorm*16 + incomeNorm*12 + eduNorm*8 + heightNorm*3 - bmiPenalty*8);
+
+  const events=[
+    {label:'Reaches age 60',              prob:Math.round((0.30+wb*0.50)*100)},
+    {label:'Married at least once',       prob:Math.round(marriageProb*100)},
+    {label:'At least one criminal charge',prob:Math.min(99,Math.round(crimeRisk*100*3))},
+    {label:'Owns property',               prob:Math.round((incomeNorm*0.55+eduNorm*0.20+heightNorm*0.05)*100)},
+    {label:'Dies before age 50',          prob:Math.max(1,Math.round((0.38-wb*0.30)*100))},
+  ];
+
+  return{crimeRisk,mortRisk,marriageProb,lifeExp,events,wb,bmi:+bmi.toFixed(1)};
+}
+
+const LIFE_EVENTS_NOTE="These predictions are what Quetelet's framework would produce — aggregate probabilities applied to an individual. They describe tendencies across populations. They say nothing certain about any single person.";
+
+function CreateAMan(){
+  const [traits,setTraits]=useState({height:170,weight:72,income:4800,education:12,health:68});
+  const [revealed,setRevealed]=useState(false);
+  const [showReckoning,setShowReckoning]=useState(false);
+  const pred=useMemo(()=>predictRisks(traits),[traits]);
+
+  const sliders=[
+    {id:'height', label:'Height',     min:145,max:200,unit:'cm',   step:1},
+    {id:'weight', label:'Weight',     min:40, max:120,unit:'kg',   step:1},
+    {id:'income', label:'Income',     min:400,max:12000,unit:' units/yr',step:100},
+    {id:'education',label:'Education',min:4,  max:20, unit:' yrs', step:1},
+    {id:'health', label:'Health',     min:0,  max:100,unit:'/100', step:1},
+  ];
+
+  // How close to the average?
+  const distFromAvg=Math.sqrt(
+    Math.pow((traits.height-AVG.height)/10,2)+
+    Math.pow((traits.weight-AVG.weight)/12,2)+
+    Math.pow((traits.income-AVG.income)/1600,2)+
+    Math.pow((traits.education-AVG.education)/3,2)+
+    Math.pow((traits.health-AVG.health)/14,2)
+  );
+  const closeness=Math.max(0,Math.min(100,Math.round(100-distFromAvg*12)));
+
+  return(
+    <Section id="create" bg="bg-paperdark">
+      <SectionHeader tag="Section VIII" title="Create a Man"
+        sub="Describe a person in numbers. The model will tell you what he is likely to do, suffer, and become. Then consider what that means."/>
+      <div className="max-w-5xl mx-auto px-6">
+        <div className="grid md:grid-cols-2 gap-12">
+
+          {/* Sliders */}
+          <div>
+            <p style={{fontFamily:'Inter,sans-serif',fontSize:'11px',letterSpacing:'0.2em',textTransform:'uppercase',color:'#7A7370',marginBottom:'20px'}}>
+              Define your subject
+            </p>
+            <div style={{display:'flex',flexDirection:'column',gap:'22px'}}>
+              {sliders.map(s=>(
+                <div key={s.id}>
+                  <div style={{display:'flex',justifyContent:'space-between',marginBottom:'5px'}}>
+                    <label htmlFor={`c-${s.id}`} style={{fontFamily:'Inter,sans-serif',fontSize:'14px',color:'#3D3D3D'}}>{s.label}</label>
+                    <span style={{fontFamily:'Inter,sans-serif',fontSize:'13px',color:'#2B4B6F',fontWeight:500}}>
+                      {traits[s.id]}{s.unit}
+                    </span>
+                  </div>
+                  {/* Avg marker */}
+                  {(()=>{
+                    const avgVal=AVG[s.id];
+                    if(avgVal==null)return null;
+                    const pct=((avgVal-s.min)/(s.max-s.min)*100);
+                    return(
+                      <div style={{position:'relative',marginBottom:'4px',height:'20px'}}>
+                        <div style={{position:'absolute',left:`${pct}%`,top:'0px',
+                          transform:'translateX(-50%)',fontSize:'8px',color:'#C4B8A8',
+                          fontFamily:'Inter,sans-serif',whiteSpace:'nowrap'}}>avg</div>
+                        <div style={{position:'absolute',left:`${pct}%`,top:'10px',
+                          width:'1px',height:'10px',background:'#C4B8A8',transform:'translateX(-50%)'}}/>
+                      </div>
+                    );
+                  })()}
+                  <input id={`c-${s.id}`} type="range" min={s.min} max={s.max} step={s.step}
+                    value={traits[s.id]}
+                    onChange={e=>{setTraits(p=>({...p,[s.id]:+e.target.value}));setRevealed(false);setShowReckoning(false)}}
+                    aria-label={`${s.label}: ${traits[s.id]}${s.unit}`}
+                    style={{width:'100%'}}/>
+                  <div style={{display:'flex',justifyContent:'space-between',fontSize:'10px',color:'#C4B8A8',fontFamily:'Inter,sans-serif'}}>
+                    <span>{s.min}{s.unit}</span><span>{s.max}{s.unit}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Closeness-to-average meter */}
+            <div style={{marginTop:'28px',padding:'14px 16px',border:'1px solid #C4B8A8'}}>
+              <div style={{display:'flex',justifyContent:'space-between',marginBottom:'6px'}}>
+                <span style={{fontFamily:'Inter,sans-serif',fontSize:'11px',color:'#7A7370',textTransform:'uppercase',letterSpacing:'0.15em'}}>Resemblance to the average man</span>
+                <span style={{fontFamily:'Playfair Display,serif',fontSize:'16px',color:'#2B4B6F'}}>{closeness}%</span>
+              </div>
+              <div style={{height:'4px',background:'#EDE7D9',borderRadius:'2px'}}>
+                <div style={{height:'4px',width:`${closeness}%`,background:'#2B4B6F',borderRadius:'2px',transition:'width 0.4s ease'}}/>
+              </div>
+              <p style={{fontFamily:'Inter,sans-serif',fontSize:'11px',color:'#7A7370',marginTop:'6px',fontStyle:'italic'}}>
+                {closeness>80?'Indistinguishable from the composite.':closeness>50?'Close to the center of the distribution.':'A significant departure from the mean.'}
+              </p>
+            </div>
+          </div>
+
+          {/* Predictions */}
+          <div>
+            <p style={{fontFamily:'Inter,sans-serif',fontSize:'11px',letterSpacing:'0.2em',textTransform:'uppercase',color:'#7A7370',marginBottom:'20px'}}>
+              What the model predicts
+            </p>
+
+            {/* Figure */}
+            <div style={{display:'flex',justifyContent:'center',marginBottom:'16px'}}>
+              <svg width="90" height="124" viewBox="0 0 160 220" aria-label="Generated person figure">
+                <ellipse cx="80" cy="215" rx="45" ry="6" fill="#C4B8A8" opacity="0.3"/>
+                <path d="M80 70 C50 70 35 90 35 120 L35 170 C35 185 55 195 80 195 C105 195 125 185 125 170 L125 120 C125 90 110 70 80 70 Z"
+                  fill="#3D3D3D" opacity={0.5+pred.wb*0.4}/>
+                <ellipse cx="80" cy="45" rx="28" ry="32" fill="#3D3D3D" opacity={0.5+pred.wb*0.4}/>
+                <line x1="35" y1="115" x2="10" y2="155" stroke="#3D3D3D" strokeWidth="12" strokeLinecap="round" opacity={0.4+pred.wb*0.35}/>
+                <line x1="125" y1="115" x2="150" y2="155" stroke="#3D3D3D" strokeWidth="12" strokeLinecap="round" opacity={0.4+pred.wb*0.35}/>
+                <line x1="60" y1="190" x2="50" y2="220" stroke="#3D3D3D" strokeWidth="14" strokeLinecap="round" opacity={0.5+pred.wb*0.4}/>
+                <line x1="100" y1="190" x2="110" y2="220" stroke="#3D3D3D" strokeWidth="14" strokeLinecap="round" opacity={0.5+pred.wb*0.4}/>
+              </svg>
+            </div>
+
+            {/* Core stats */}
+            <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:'8px',marginBottom:'16px'}}>
+              {[
+                ['Est. life expectancy',`${pred.lifeExp} yrs`, pred.lifeExp<55?'#8B2E2E':'#2B4B6F'],
+                ['Marriage probability',`${Math.round(pred.marriageProb*100)}%`,'#2B4B6F'],
+                ['Annual crime risk',`${(pred.crimeRisk*100).toFixed(1)}%`, pred.crimeRisk>0.1?'#8B2E2E':'#3D3D3D'],
+                ['Annual mortality risk',`${(pred.mortRisk*100).toFixed(1)}%`, pred.mortRisk>0.12?'#8B2E2E':'#3D3D3D'],
+                ['Body mass index',`${pred.bmi}`, pred.bmi<18.5||pred.bmi>27?'#8B2E2E':'#3D3D3D'],
+              ].map(([k,v,c])=>(
+                <div key={k} style={{border:'1px solid #C4B8A8',padding:'10px 12px',background:'#F5F0E8'}}>
+                  <div style={{fontFamily:'Inter,sans-serif',fontSize:'11px',color:'#7A7370',marginBottom:'3px'}}>{k}</div>
+                  <div style={{fontFamily:'Playfair Display,serif',fontSize:'18px',color:c}}>{v}</div>
+                </div>
+              ))}
+            </div>
+
+            {/* Life events */}
+            <div style={{marginBottom:'20px'}}>
+              <p style={{fontFamily:'Inter,sans-serif',fontSize:'11px',letterSpacing:'0.15em',textTransform:'uppercase',color:'#7A7370',marginBottom:'10px'}}>
+                Life event probabilities
+              </p>
+              {pred.events.map(ev=>(
+                <div key={ev.label} style={{display:'flex',justifyContent:'space-between',alignItems:'center',
+                  borderBottom:'1px solid #EDE7D9',padding:'7px 0'}}>
+                  <span style={{fontFamily:'Inter,sans-serif',fontSize:'13px',color:'#3D3D3D'}}>{ev.label}</span>
+                  <div style={{display:'flex',alignItems:'center',gap:'8px'}}>
+                    <div style={{width:'60px',height:'3px',background:'#EDE7D9',borderRadius:'2px'}}>
+                      <div style={{height:'3px',width:`${Math.min(100,ev.prob)}%`,
+                        background:ev.prob>60?'#2B4B6F':ev.prob>30?'#7A7370':'#8B2E2E',
+                        borderRadius:'2px',transition:'width 0.5s ease'}}/>
+                    </div>
+                    <span style={{fontFamily:'Playfair Display,serif',fontSize:'14px',
+                      color:ev.prob>60?'#2B4B6F':ev.prob>30?'#3D3D3D':'#8B2E2E',
+                      minWidth:'36px',textAlign:'right'}}>{ev.prob}%</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Reveal reckoning button */}
+            {!showReckoning?(
+              <button onClick={()=>setShowReckoning(true)}
+                style={{fontFamily:'Inter,sans-serif',fontSize:'12px',letterSpacing:'0.15em',
+                  textTransform:'uppercase',padding:'10px 20px',background:'none',
+                  border:'1px solid #C4B8A8',color:'#7A7370',cursor:'pointer',transition:'all 0.2s',width:'100%'}}
+                onMouseEnter={e=>{e.target.style.borderColor='#1C1C1C';e.target.style.color='#1C1C1C'}}
+                onMouseLeave={e=>{e.target.style.borderColor='#C4B8A8';e.target.style.color='#7A7370'}}>
+                What just happened? →
+              </button>
+            ):(
+              <div className="fade-in" style={{borderLeft:'3px solid #8B2E2E',paddingLeft:'16px',paddingTop:'6px',paddingBottom:'6px',marginTop:'4px'}}>
+                <p style={{fontFamily:'Playfair Display,serif',fontSize:'14px',fontStyle:'italic',color:'#1C1C1C',lineHeight:'1.7',marginBottom:'10px'}}>
+                  "You just described a person in five numbers. A statistical model turned those numbers into a life — probabilities of marriage, crime, death.
+                  This is exactly what Quetelet proposed. This is also exactly what later became criminal anthropology, actuarial insurance tables, and predictive policing."
+                </p>
+                <p style={{fontFamily:'Inter,sans-serif',fontSize:'12px',color:'#7A7370',fontStyle:'italic',lineHeight:'1.6'}}>
+                  {LIFE_EVENTS_NOTE}
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SECTION 10 — ENDING
+───────────────────────────────────────────────────────────────── */
+function Ending(){
+  const [dissolved,setDissolved]=useState(false);
+  const people=POP.slice(0,120);
+  const cols=12;
+  return(
+    <Section id="ending" bg="bg-paper">
+      <div className="max-w-4xl mx-auto px-6 text-center">
+        <p className="font-sans text-xs tracking-widest uppercase text-inkfaint mb-4">Conclusion</p>
+        <h2 className="font-serif text-4xl md:text-5xl text-ink mb-5">The Weight of the Mean</h2>
+        <div className="w-16 h-px bg-rule mx-auto mb-10"/>
+        <div className="max-w-2xl mx-auto text-left space-y-5 mb-14">
+          <p className="font-sans text-base text-inklight leading-relaxed">
+            The average man helped invent social science. Before Quetelet, there was no systematic way to speak
+            about society as an object of knowledge—something with regularities, patterns, predictable tendencies. The average made that possible.
+          </p>
+          <p className="font-sans text-base text-inklight leading-relaxed">
+            But the average man also taught modern societies to mistake statistical order for human truth.
+            The mean became a norm. The norm became an ideal. The ideal became a standard against which real,
+            varied, irreducible people were quietly measured and found wanting.
+          </p>
+        </div>
+        <blockquote className="max-w-xl mx-auto mb-14">
+          <div className="w-8 h-px bg-rule mx-auto mb-5"/>
+          <p className="font-serif text-xl italic text-ink leading-snug">
+            The average man helped invent social science.
+            He also taught modern societies to mistake statistical order for human truth.
+          </p>
+          <div className="w-8 h-px bg-rule mx-auto mt-5"/>
+        </blockquote>
+
+        {/* Dissolve interaction */}
+        {!dissolved?(
+          <div className="flex flex-col items-center gap-6 fade-in">
+            <CompositeFigure size={140}/>
+            <button onClick={()=>setDissolved(true)}
+              className="font-sans text-sm tracking-widest uppercase border border-ink text-ink px-10 py-3 hover:bg-ink hover:text-paper transition-colors duration-300 focus:outline-none focus:ring-2 focus:ring-accent">
+              Return to the Individuals
+            </button>
+          </div>
+        ):(
+          <div className="fade-in">
+            <div className="relative w-full mx-auto" style={{paddingBottom:'60%',maxWidth:'560px'}}>
+              {people.map((p,i)=>{
+                const col=i%cols, row=Math.floor(i/cols);
+                const x=(col/cols*100)+(100/cols*.5);
+                const y=(row/10*100)+(100/10*.5);
+                return(
+                  <div key={p.id} style={{position:'absolute',left:`${x}%`,top:`${y}%`,transform:'translate(-50%,-50%)',
+                    animation:`fadeIn ${0.4+i*0.005}s ease forwards`,opacity:0}}>
+                    <Sil size={18} opacity={0.45+(p.health/100)*.4}/>
+                  </div>
+                );
+              })}
+            </div>
+            <p className="font-serif italic text-base text-inkfaint mt-8">
+              The average was always built from many irreducible lives.
+            </p>
+            <button onClick={()=>setDissolved(false)}
+              className="mt-6 font-sans text-xs tracking-widest uppercase border border-rule text-inkfaint px-6 py-2 hover:border-ink hover:text-ink transition-colors focus:outline-none focus:ring-2 focus:ring-accent">
+              ← Return to composite
+            </button>
+          </div>
+        )}
+
+        <footer className="mt-24 border-t border-rule pt-10">
+          <p className="font-sans text-xs text-inkfaint tracking-widest uppercase mb-2">An interactive exhibit on the history of statistics</p>
+          <p className="font-sans text-xs text-inkfaint">After Adolphe Quetelet, <em>Sur l'homme et le développement de ses facultés</em>, 1835</p>
+        </footer>
+      </div>
+    </Section>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   SIDE NAV
+───────────────────────────────────────────────────────────────── */
+const NAV=[
+  {id:'hero',label:'Intro'},{id:'swarm',label:'I. Individuals'},{id:'transform',label:'II. Average'},
+  {id:'explanation',label:'III. What It Is'},{id:'norm',label:'IV. The Norm'},
+  {id:'social-law',label:'V. Social Law'},{id:'critique',label:'VI. Critique'},
+  {id:'where',label:'VII. Where You Fall'},{id:'create',label:'VIII. Create a Man'},
+  {id:'ending',label:'Conclusion'},
+];
+function SideNav({active}){
+  return(
+    <nav className="hidden lg:flex fixed left-5 top-1/2 -translate-y-1/2 z-50 flex-col gap-3" aria-label="Section navigation">
+      {NAV.map(n=>(
+        <button key={n.id} onClick={()=>document.getElementById(n.id)?.scrollIntoView({behavior:'smooth'})}
+          aria-label={`Go to ${n.label}`} aria-current={active===n.id?'true':undefined}
+          className="group flex items-center gap-2 focus:outline-none">
+          <div className={`w-1.5 h-1.5 rounded-full transition-all duration-300 ${active===n.id?'bg-accent scale-150':'bg-rule group-hover:bg-inkfaint'}`}/>
+          <span className={`font-sans text-xs whitespace-nowrap transition-all duration-200 ${active===n.id?'text-accent opacity-100':'text-inkfaint opacity-0 group-hover:opacity-100'}`}>{n.label}</span>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────────
+   APP
+───────────────────────────────────────────────────────────────── */
+function App(){
+  const [started,setStarted]=useState(false);
+  const [active,setActive]=useState('hero');
+
+  useEffect(()=>{
+    if(!started)return;
+    const obs=[];
+    NAV.forEach(({id})=>{
+      const el=document.getElementById(id); if(!el)return;
+      const o=new IntersectionObserver(([e])=>{if(e.isIntersecting)setActive(id)},{threshold:0.3});
+      o.observe(el); obs.push(o);
+    });
+    return()=>obs.forEach(o=>o.disconnect());
+  },[started]);
+
+  const begin=useCallback(()=>{
+    setStarted(true);
+    setTimeout(()=>document.getElementById('swarm')?.scrollIntoView({behavior:'smooth'}),80);
+  },[]);
+
+  return(
+    <div className="relative">
+      <SideNav active={active}/>
+      <Hero onBegin={begin}/>
+      {started&&(
+        <div className="fade-in">
+          <Swarm/>
+          <Transformation/>
+          <Explanation/>
+          <InterpretToggle/>
+          <SocialLaw/>
+          <Critique/>
+          <WhereDoYouFall/>
+          <CreateAMan/>
+          <Ending/>
+        </div>
+      )}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
